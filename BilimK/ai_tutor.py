@@ -133,8 +133,6 @@ def get_ai_explanation(question_text: str, topic: str,
         return response.choices[0].message.content.strip()
 
     except Exception as e:
-        # На хакатоне интернет/API может подвести — обязательно нужен fallback,
-        # чтобы демо не сломалось на глазах у жюри.
         return (
             "Не удалось получить объяснение от ИИ-тьютора "
             f"(проверьте API-ключ или соединение). Техническая причина: {e}\n\n"
@@ -179,15 +177,10 @@ def get_learning_plan(subject: str, weak_topics: list) -> str:
     ошибся. В отличие от get_summary_feedback (пара предложений),
     здесь модель строит пошаговую программу — что и в каком порядке
     повторять, с краткими пояснениями по каждому шагу.
-
-    weak_topics — список тем с ошибками (могут повторяться, если
-    ошибок в одной теме было несколько — это нормально, модель сама
-    сведёт их в план).
     """
     if not weak_topics:
         return "По итогам теста явных пробелов не выявлено — план обучения не требуется."
 
-    # Убираем дубликаты тем, сохраняя порядок появления
     unique_topics = list(dict.fromkeys(weak_topics))
     topics_str = ", ".join(unique_topics)
 
