@@ -127,14 +127,18 @@ if st.session_state.test_started and not st.session_state.test_finished:
                     answer_records=answer_records,
                 )
 
-                # Общая рекомендация по итогам теста (опционально, одна доп. LLM-вызов)
+                # Общая рекомендация по итогам теста (короткая, 2-3 предложения)
                 summary = ai_tutor.get_summary_feedback(subject, wrong_topics)
+
+                # Полноценный персональный план обучения по слабым темам
+                learning_plan = ai_tutor.get_learning_plan(subject, wrong_topics)
 
             st.session_state.results = {
                 "correct_count": correct_count,
                 "total": len(questions),
                 "answer_records": answer_records,
                 "summary": summary,
+                "learning_plan": learning_plan,
             }
             st.session_state.test_finished = True
             st.rerun()
@@ -148,6 +152,9 @@ if st.session_state.test_finished and st.session_state.results:
     st.metric("Правильных ответов", f"{results['correct_count']} / {results['total']}")
 
     st.info(f"**Общая рекомендация:** {results['summary']}")
+
+    st.subheader("📚 Персональный план обучения")
+    st.markdown(results["learning_plan"])
 
     st.subheader("🔍 Разбор ответов")
     for i, rec in enumerate(results["answer_records"]):

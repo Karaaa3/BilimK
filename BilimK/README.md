@@ -7,13 +7,22 @@
 2. Получить не просто оценку, а **персональное объяснение** каждой
    ошибки от ИИ-тьютора — как если бы рядом сидел репетитор.
 
-## Запуск
+## Запуск (локально)
 ```bash
 pip install -r requirements.txt
-cp .env.example .env      # и вставьте свой ключ Anthropic API
-export ANTHROPIC_API_KEY=ваш_ключ   # или через .env + python-dotenv
+cp .env.example .env      # скопируйте шаблон
+# откройте .env и вставьте свой ключ OpenRouter вместо your_api_key_here
 streamlit run app.py
 ```
+Ключ никогда не хранится в коде — только в `.env` (он в `.gitignore` и не попадает в Git).
+
+## Деплой на Streamlit Cloud
+`.env` на Cloud не работает — вместо него нужно задать секрет в интерфейсе:
+`Settings → Secrets` и добавить строку:
+```
+OPENROUTER_API_KEY = "ваш_ключ"
+```
+Приложение само подхватит его через `st.secrets` (см. `ai_tutor.py`).
 
 ## Структура проекта
 ```
