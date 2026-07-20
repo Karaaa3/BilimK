@@ -11,7 +11,9 @@ db.py
   (например, чтобы через месяц показать: "у ученика системная проблема с темой Х")
 """
 
+import hashlib
 import os
+import secrets
 import sqlite3
 from datetime import datetime
 
@@ -61,6 +63,20 @@ def init_db():
     except sqlite3.OperationalError:
         pass
 
+    # Поле username связывает тест с зарегистрированным аккаунтом
+    # (для гостевых/старых тестов может быть NULL - обратная совместимость).
+    try:
+        cur.execute("ALTER TABLE tests ADD COLUMN username TEXT")
+    except sqlite3.OperationalError:
+        pass
+
+    # Флаг диагностического теста (охватывает все предметы разом),
+    # чтобы отличать его от обычного теста по одному предмету.
+    try:
+        cur.execute("ALTER TABLE tests ADD COLUMN is_diagnostic INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+
     cur.execute("""
         CREATE TABLE IF NOT EXISTS answers (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -75,12 +91,28 @@ def init_db():
         )
     """)
 
+    # Аккаунты учеников: пароль хранится НЕ в открытом виде, а как хеш
+    # с индивидуальной "солью" (salt) для каждого пользователя.
+    # Это упрощённая, но не игрушечная схема — pbkdf2_hmac с 100 000
+    # итераций является стандартной практикой без сторонних библиотек.
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            salt TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            last_diagnostic_at TEXT
+        )
+    """)
+
     conn.commit()
     conn.close()
 
 
 def save_test_result(student_name: str, subject: str, grade: int, total_questions: int,
-                      correct_answers: int, answer_records: list) -> int:
+                      correct_answers: int, answer_records: list,
+                      username: str = None, is_diagnostic: bool = False) -> int:
     """
     Сохраняет результат прохождения теста + все ответы одним пакетом.
 
@@ -94,16 +126,22 @@ def save_test_result(student_name: str, subject: str, grade: int, total_question
             "ai_explanation": str или None
         }
 
+    username — логин зарегистрированного ученика (для связи с аккаунтом
+    и картой прогресса). Может быть None для обратной совместимости.
+    is_diagnostic — True для сводного диагностического теста по всем
+    предметам (в отличие от обычного теста по одному предмету).
+
     Возвращает id созданной записи в tests (пригодится для истории/дашборда).
     """
     conn = get_connection()
     cur = conn.cursor()
 
     cur.execute("""
-        INSERT INTO tests (student_name, subject, grade, total_questions, correct_answers, created_at)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO tests (student_name, subject, grade, total_questions, correct_answers,
+                            created_at, username, is_diagnostic)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     """, (student_name, subject, grade, total_questions, correct_answers,
-          datetime.now().isoformat(timespec="seconds")))
+          datetime.now().isoformat(timespec="seconds"), username, 1 if is_diagnostic else 0))
 
     test_id = cur.lastrowid
 
@@ -163,6 +201,124 @@ def get_weak_topics(student_name: str):
         GROUP BY a.topic
         ORDER BY wrong_count DESC
     """, (student_name,))
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+# ============================================================
+# АККАУНТЫ УЧЕНИКОВ
+# ============================================================
+# Пароли НИКОГДА не хранятся в открытом виде. Используется
+# pbkdf2_hmac (встроен в стандартную библиотеку hashlib, сторонние
+# пакеты вроде bcrypt не нужны) с индивидуальной случайной "солью"
+# на каждого пользователя - это защищает от атак по радужным таблицам.
+# ============================================================
+
+def _hash_password(password: str, salt: str) -> str:
+    """Хеширует пароль с солью через pbkdf2_hmac (100 000 итераций)."""
+    return hashlib.pbkdf2_hmac(
+        "sha256", password.encode("utf-8"), salt.encode("utf-8"), 100_000
+    ).hex()
+
+
+def register_user(username: str, password: str) -> tuple[bool, str]:
+    """
+    Регистрирует нового пользователя.
+    Возвращает (успех: bool, сообщение: str).
+    """
+    username = username.strip()
+    if not username or not password:
+        return False, "Логин и пароль не могут быть пустыми."
+    if len(password) < 4:
+        return False, "Пароль должен содержать минимум 4 символа."
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("SELECT id FROM users WHERE username = ?", (username,))
+    if cur.fetchone():
+        conn.close()
+        return False, "Пользователь с таким логином уже существует."
+
+    salt = secrets.token_hex(16)
+    password_hash = _hash_password(password, salt)
+
+    cur.execute("""
+        INSERT INTO users (username, password_hash, salt, created_at)
+        VALUES (?, ?, ?, ?)
+    """, (username, password_hash, salt, datetime.now().isoformat(timespec="seconds")))
+
+    conn.commit()
+    conn.close()
+    return True, "Регистрация прошла успешно!"
+
+
+def authenticate_user(username: str, password: str) -> bool:
+    """Проверяет логин и пароль. Возвращает True, если совпадают."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT password_hash, salt FROM users WHERE username = ?", (username.strip(),))
+    row = cur.fetchone()
+    conn.close()
+
+    if not row:
+        return False
+
+    stored_hash, salt = row
+    return _hash_password(password, salt) == stored_hash
+
+
+def get_last_diagnostic(username: str):
+    """
+    Возвращает дату последней пройденной диагностики (datetime) или None,
+    если ученик ещё ни разу её не проходил.
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT last_diagnostic_at FROM users WHERE username = ?", (username,))
+    row = cur.fetchone()
+    conn.close()
+
+    if not row or not row[0]:
+        return None
+    return datetime.fromisoformat(row[0])
+
+
+def mark_diagnostic_completed(username: str):
+    """Отмечает, что ученик только что прошёл диагностический тест."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE users SET last_diagnostic_at = ? WHERE username = ?",
+        (datetime.now().isoformat(timespec="seconds"), username),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_progress_map(username: str):
+    """
+    Возвращает "карту" прогресса ученика: по каждому предмету и теме -
+    сколько было верных и всего ответов за всё время (по всем тестам,
+    включая диагностические). Используется для визуализации того, какие
+    темы ученик уже "прокачал", а какие ещё требуют внимания.
+
+    Возвращает список кортежей: (subject, topic, correct_count, total_count)
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT t.subject,
+               a.topic,
+               SUM(CASE WHEN a.is_correct = 1 THEN 1 ELSE 0 END) AS correct_count,
+               COUNT(*) AS total_count
+        FROM answers a
+        JOIN tests t ON a.test_id = t.id
+        WHERE t.username = ?
+        GROUP BY t.subject, a.topic
+        ORDER BY t.subject, a.topic
+    """, (username,))
     rows = cur.fetchall()
     conn.close()
     return rows
