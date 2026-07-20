@@ -11,6 +11,7 @@ db.py
   (например, чтобы через месяц показать: "у ученика системная проблема с темой Х")
 """
 
+import os
 import sqlite3
 from datetime import datetime
 
@@ -18,7 +19,15 @@ DB_PATH = "data/quiz.db"
 
 
 def get_connection():
-    """Открывает соединение с базой (создаёт файл, если его ещё нет)."""
+    """
+    Открывает соединение с базой (создаёт файл, если его ещё нет).
+
+    Важно: Git не отслеживает пустые папки, поэтому на "чистом" сервере
+    (например, при деплое на Streamlit Cloud) папки data может не быть
+    вообще — os.makedirs создаёт её на лету при первом обращении,
+    иначе sqlite3.connect упадёт с OperationalError.
+    """
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
