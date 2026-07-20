@@ -18,6 +18,8 @@ app.py
    d. Показывает ученику результат и персональные объяснения.
 """
 
+import concurrent.futures
+
 import streamlit as st
 
 import db
@@ -99,29 +101,26 @@ if st.session_state.test_started and not st.session_state.test_finished:
             st.warning("Пожалуйста, ответьте на все вопросы перед завершением теста.")
         else:
             with st.spinner("ИИ-тьютор анализирует ваши ответы..."):
+                # --- УСКОРЕНИЕ ---
+                # Раньше объяснение для каждого неверного ответа запрашивалось
+                # ПО ОЧЕРЕДИ (сначала вопрос 1, дождались ответа, потом вопрос 2
+                # и т.д.), и время ожидания складывалось линейно: 3 ошибки —
+                # это 3 полных цикла ожидания подряд.
+                #
+                # Теперь используем ThreadPoolExecutor: все запросы к API
+                # отправляются ОДНОВРЕМЕННО, а мы просто ждём, пока ответит
+                # самый медленный из них. Для теста с 3 ошибками это может
+                # ускорить итоговое время в 2-3 раза.
                 answer_records = []
                 correct_count = 0
                 wrong_topics = []
+                wrong_items = []  # (индекс в answer_records, вопрос, ответ ученика, правильный ответ)
 
+                # Проход 1: считаем баллы и сразу собираем список того,
+                # что нужно объяснить (без вызова API — это быстро)
                 for q, user_choice in zip(questions, user_answers):
                     correct_option = q["options"][q["correct_index"]]
                     is_correct = (user_choice == correct_option)
-
-                    explanation = None
-                    if is_correct:
-                        correct_count += 1
-                    else:
-                        # ---- КЛЮЧЕВОЙ МОМЕНТ ИИ-ТЬЮТОРА ----
-                        # Вызываем LLM только для неверных ответов.
-                        # Мы передаём модели уже известный правильный ответ,
-                        # чтобы она не "угадывала" его заново, а объясняла разницу.
-                        explanation = ai_tutor.get_ai_explanation(
-                            question_text=q["question"],
-                            topic=q["topic"],
-                            student_answer=user_choice,
-                            correct_answer=correct_option,
-                        )
-                        wrong_topics.append(q["topic"])
 
                     answer_records.append({
                         "question_text": q["question"],
@@ -129,8 +128,32 @@ if st.session_state.test_started and not st.session_state.test_finished:
                         "student_answer": user_choice,
                         "correct_answer": correct_option,
                         "is_correct": is_correct,
-                        "ai_explanation": explanation,
+                        "ai_explanation": None,
                     })
+
+                    if is_correct:
+                        correct_count += 1
+                    else:
+                        wrong_topics.append(q["topic"])
+                        wrong_items.append((len(answer_records) - 1, q, user_choice, correct_option))
+
+                # Проход 2: параллельно запрашиваем объяснения только для
+                # неверных ответов (ИИ вызывается только там, где реально нужен)
+                if wrong_items:
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=len(wrong_items)) as executor:
+                        futures = {
+                            executor.submit(
+                                ai_tutor.get_ai_explanation,
+                                question_text=q["question"],
+                                topic=q["topic"],
+                                student_answer=user_choice,
+                                correct_answer=correct_option,
+                            ): idx
+                            for idx, q, user_choice, correct_option in wrong_items
+                        }
+                        for future in concurrent.futures.as_completed(futures):
+                            idx = futures[future]
+                            answer_records[idx]["ai_explanation"] = future.result()
 
                 # Сохраняем результат теста в SQLite
                 db.save_test_result(
@@ -142,11 +165,13 @@ if st.session_state.test_started and not st.session_state.test_finished:
                     answer_records=answer_records,
                 )
 
-                # Общая рекомендация по итогам теста (короткая, 2-3 предложения)
-                summary = ai_tutor.get_summary_feedback(subject, wrong_topics)
-
-                # Полноценный персональный план обучения по слабым темам
-                learning_plan = ai_tutor.get_learning_plan(subject, wrong_topics)
+                # Резюме и план обучения тоже не зависят друг от друга —
+                # запускаем их параллельно вместо ожидания по очереди
+                with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+                    future_summary = executor.submit(ai_tutor.get_summary_feedback, subject, wrong_topics)
+                    future_plan = executor.submit(ai_tutor.get_learning_plan, subject, wrong_topics)
+                    summary = future_summary.result()
+                    learning_plan = future_plan.result()
 
             st.session_state.results = {
                 "correct_count": correct_count,
