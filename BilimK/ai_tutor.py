@@ -1,3 +1,5 @@
+from dotenv import load_dotenv
+load_dotenv()
 """
 ai_tutor.py
 -----------
@@ -36,11 +38,13 @@ ai_tutor.py
 """
 
 import os
-from anthropic import Anthropic
+from openai import OpenAI
 
-# Ключ читается из переменной окружения — никогда не хардкодим в код
-client = Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
-
+# Вставь свой ключ OpenRouter прямо сюда в кавычках
+client = OpenAI(
+    base_url="https://openrouter.ai/api/v1",
+    api_key="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", 
+)
 SYSTEM_PROMPT = """Ты — доброжелательный школьный репетитор для учеников 8-12 классов
 из сельских школ. Твоя задача — объяснить ученику, почему его ответ на тестовый
 вопрос неверен, и показать короткий, понятный путь к правильному ответу.
@@ -54,8 +58,7 @@ SYSTEM_PROMPT = """Ты — доброжелательный школьный р
 - Не придумывай факты, которых нет в предоставленном вопросе."""
 
 
-def get_ai_explanation(question_text: str, topic: str,
-                        student_answer: str, correct_answer: str) -> str:
+def get_ai_explanation(question_text: str, topic: str, student_answer: str, correct_answer: str) -> str:
     """
     Основная функция ИИ-тьютора.
 
@@ -77,22 +80,26 @@ def get_ai_explanation(question_text: str, topic: str,
 """
 
     try:
-        response = client.messages.create(
-            model="claude-sonnet-4-5",
-            max_tokens=400,
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_prompt}],
+        # Используем формат OpenRouter/OpenAI
+        response = client.chat.completions.create(
+            model="anthropic/claude-3.5-sonnet",
+            # Модель Claude через OpenRouter
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user}  # Переменная user должна содержать сам промпт
+            ]
         )
-        return response.content[0].text.strip()
+        # Ответ приходит в другом формате, извлекаем его так
+        return response.choices[0].message.content.strip()
 
     except Exception as e:
-        # На хакатоне интернет/API может подвести — обязательно нужен fallback,
-        # чтобы демо не сломалось на глазах у жюри.
+        # Обработка ошибок, если API недоступно
+        print(f"Ошибка ИИ-тьютора: {e}")
         return (
-            "Не удалось получить объяснение от ИИ-тьютора "
-            f"(проверьте API-ключ или соединение). Техническая причина: {e}\n\n"
-            f"Правильный ответ: {correct_answer}. Тема для повторения: {topic}."
-        )
+        "Не удалось получить объяснение от ИИ-тьютора (проверьте API-ключ или соединение).\n"
+        f"Техническая причина: {e}\n\n"
+        f"Правильный ответ: {correct_answer}. Тема для повторения: {topic}."
+    )
 
 
 def get_summary_feedback(subject: str, weak_topics: list) -> str:
