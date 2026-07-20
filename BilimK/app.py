@@ -202,7 +202,7 @@ with st.sidebar:
     st.divider()
     page = st.radio(
         "Что хотите сделать?",
-        ["Пройти тест", "Диагностика по всем предметам", "Мой прогресс"],
+        ["Пройти тест", "Диагностика по всем предметам", "Мой прогресс", "🗂️ Банк ошибок"],
     )
 
 st.title("📘 Персональный ИИ-тьютор")
@@ -447,3 +447,69 @@ elif page == "Мой прогресс":
             st.warning(f"⚠️ Слабых мест сейчас: {weak_count}. Пройдите тест по этим темам ещё раз, чтобы закрыть пробелы.")
         else:
             st.success("🎉 Явных слабых мест не найдено — отличная работа!")
+
+
+# ============================================================
+# СТРАНИЦА 4: БАНК ОШИБОК
+# ============================================================
+# Идея: ученик сдаёт тесты по разным предметам в разное время
+# (сегодня - русский, завтра - физика, через неделю - информатика),
+# и вместо того чтобы вручную выписывать себе, где он ошибся,
+# приложение само копит ВСЕ его ошибки в одном месте - с уже готовым
+# объяснением от ИИ-тьютора (оно сохранено ещё в момент прохождения
+# теста, поэтому здесь ничего заново не генерируется - только читаем
+# готовые данные из базы, быстро и без дополнительных затрат на API).
+
+elif page == "🗂️ Банк ошибок":
+    st.subheader("🗂️ Банк ошибок")
+    st.caption(
+        "Здесь автоматически собираются все ваши неверные ответы со всех "
+        "пройденных тестов и диагностик - ничего вручную сохранять не нужно."
+    )
+
+    mistakes = db.get_mistake_bank(username)
+
+    if not mistakes:
+        st.write(
+            "Пока ошибок не накопилось — либо вы ещё не проходили тесты, "
+            "либо ответили на всё верно. Отличный результат!"
+        )
+    else:
+        # Сводка: по каким темам ошибок больше всего - помогает сразу
+        # понять, за что браться в первую очередь, не листая весь список
+        topic_counts = {}
+        for row in mistakes:
+            subject, grade, topic, *_ = row
+            key = (subject, topic)
+            topic_counts[key] = topic_counts.get(key, 0) + 1
+
+        top_weak = sorted(topic_counts.items(), key=lambda x: x[1], reverse=True)[:5]
+        st.markdown("**Чаще всего ошибки встречаются в темах:**")
+        for (subject, topic), count in top_weak:
+            st.write(f"- {subject} → {topic} ({count} ошибок)")
+
+        st.divider()
+
+        # Группируем подробный список по предметам, свежие ошибки сверху
+        subjects_with_mistakes = []
+        for row in mistakes:
+            if row[0] not in subjects_with_mistakes:
+                subjects_with_mistakes.append(row[0])
+
+        selected_subject = st.selectbox(
+            "Показать ошибки по предмету:",
+            ["Все предметы"] + subjects_with_mistakes,
+        )
+
+        for subject, grade, topic, question_text, student_answer, correct_answer, ai_explanation, created_at in mistakes:
+            if selected_subject != "Все предметы" and subject != selected_subject:
+                continue
+
+            date_str = created_at.split("T")[0] if created_at else ""
+            with st.expander(f"❌ [{subject}, {grade} класс] {topic} — {date_str}"):
+                st.write(f"**Вопрос:** {question_text}")
+                st.write(f"Ваш ответ: _{student_answer}_")
+                st.write(f"Правильный ответ: **{correct_answer}**")
+                if ai_explanation:
+                    st.markdown("---")
+                    st.markdown(f"🧑‍🏫 **Объяснение тьютора:**\n\n{ai_explanation}")

@@ -322,3 +322,32 @@ def get_progress_map(username: str):
     rows = cur.fetchall()
     conn.close()
     return rows
+
+
+def get_mistake_bank(username: str):
+    """
+    "Банк ошибок" - собирает ВСЕ неверные ответы ученика со ВСЕХ его
+    тестов (обычных и диагностических), за всё время, в одном месте.
+
+    Ключевая идея: объяснение от ИИ-тьютора УЖЕ сохранено в колонке
+    ai_explanation на момент прохождения теста, поэтому здесь не нужно
+    заново обращаться к API - просто достаём готовые объяснения из БД.
+    Это быстро (без сетевых запросов) и бесплатно (без новых токенов).
+
+    Возвращает список кортежей, отсортированный по предмету и дате:
+    (subject, grade, topic, question_text, student_answer,
+     correct_answer, ai_explanation, created_at)
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT t.subject, t.grade, a.topic, a.question_text,
+               a.student_answer, a.correct_answer, a.ai_explanation, t.created_at
+        FROM answers a
+        JOIN tests t ON a.test_id = t.id
+        WHERE t.username = ? AND a.is_correct = 0
+        ORDER BY t.subject, t.created_at DESC
+    """, (username,))
+    rows = cur.fetchall()
+    conn.close()
+    return rows
