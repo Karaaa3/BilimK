@@ -76,6 +76,43 @@ client = OpenAI(
 
 MODEL_NAME = "anthropic/claude-sonnet-5"
 
+# --- НАСТРОЙКИ СКОРОСТИ ---
+# max_tokens ограничивает максимальную длину ответа - модель не может
+# "растекаться" длиннее, чем реально нужно для короткого объяснения,
+# что само по себе немного ускоряет генерацию.
+#
+# extra_body с reasoning.effort="low" просит модель тратить минимум
+# времени на скрытые "размышления" перед ответом (Sonnet 5 поддерживает
+# adaptive thinking с разными уровнями effort). Для короткого объяснения
+# школьной ошибки глубокие раздумья не нужны - лишняя секунда-две уходит
+# на них незаметно для пользователя, но заметно по времени ожидания.
+#
+# Обёрнуто в try/except: если конкретная модель/провайдер не поддерживает
+# этот параметр, код просто повторит запрос без него - fallback безопасен.
+FAST_EXTRA_BODY = {"reasoning": {"effort": "low"}}
+
+
+def _fast_completion(messages: list, max_tokens: int):
+    """
+    Обёртка над вызовом API с настройками на скорость.
+    При первой попытке просим минимальный reasoning effort;
+    если провайдер отклонит параметр - тихо повторяем без него.
+    """
+    try:
+        return client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=messages,
+            max_tokens=max_tokens,
+            extra_body=FAST_EXTRA_BODY,
+        )
+    except Exception:
+        return client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=messages,
+            max_tokens=max_tokens,
+        )
+
+
 SYSTEM_PROMPT = """Ты — доброжелательный школьный репетитор для учеников 8-12 классов
 из сельских школ. Твоя задача — объяснить ученику, почему его ответ на тестовый
 вопрос неверен, и показать короткий, понятный путь к правильному ответу.
@@ -129,12 +166,12 @@ def get_ai_explanation(question_text: str, topic: str,
 """
 
     try:
-        response = client.chat.completions.create(
-            model=MODEL_NAME,
+        response = _fast_completion(
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
+            max_tokens=300,
         )
         return response.choices[0].message.content.strip()
 
@@ -167,12 +204,12 @@ def get_summary_feedback(subject: str, weak_topics: list) -> str:
 """
 
     try:
-        response = client.chat.completions.create(
-            model=MODEL_NAME,
+        response = _fast_completion(
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
+            max_tokens=150,
         )
         return response.choices[0].message.content.strip()
     except Exception:
@@ -206,12 +243,12 @@ def get_learning_plan(subject: str, weak_topics: list) -> str:
 """
 
     try:
-        response = client.chat.completions.create(
-            model=MODEL_NAME,
+        response = _fast_completion(
             messages=[
                 {"role": "system", "content": PLAN_SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
+            max_tokens=500,
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
