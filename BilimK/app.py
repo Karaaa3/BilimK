@@ -22,6 +22,7 @@ LLM-провайдера или структуру БД.
 """
 
 import concurrent.futures
+import random
 from datetime import datetime
 
 import pandas as pd
@@ -33,6 +34,31 @@ from questions import get_grades, get_questions, get_subjects
 
 st.set_page_config(page_title="Тьютор для сельских школ", page_icon="📘")
 db.init_db()  # создаёт/мигрирует таблицы - безопасно вызывать при каждом запуске
+
+
+def shuffle_questions(questions: list) -> list:
+    """
+    Перемешивает порядок вопросов И порядок вариантов ответа внутри
+    каждого вопроса. Банк вопросов у нас пока небольшой (5 на класс
+    по каждому предмету) — без перемешивания ученик, проходящий тест
+    повторно через неделю, увидел бы буквально идентичный тест
+    с правильным ответом на том же месте. Перемешивание не увеличивает
+    число уникальных вопросов, но убирает эффект "я просто запомнил,
+    что правильный ответ - вариант Б".
+
+    Возвращает НОВЫЙ список (исходный questions не изменяется),
+    с пересчитанным correct_index под новый порядок вариантов.
+    """
+    shuffled = []
+    for q in random.sample(questions, len(questions)):
+        correct_text = q["options"][q["correct_index"]]
+        new_options = q["options"][:]
+        random.shuffle(new_options)
+        new_q = dict(q)
+        new_q["options"] = new_options
+        new_q["correct_index"] = new_options.index(correct_text)
+        shuffled.append(new_q)
+    return shuffled
 
 
 # ============================================================
@@ -212,11 +238,16 @@ if page == "Пройти тест":
             st.session_state.results = None
             st.session_state.current_subject = subject
             st.session_state.current_grade = grade
+            # Перемешиваем ОДИН РАЗ при старте и фиксируем в сессии -
+            # иначе порядок вопросов/вариантов "плыл" бы при каждом
+            # клике (Streamlit пересчитывает весь скрипт заново
+            # на любое взаимодействие, включая выбор ответа).
+            st.session_state.current_questions = shuffle_questions(get_questions(subject, grade))
 
     if st.session_state.test_started and not st.session_state.test_finished:
         subject = st.session_state.current_subject
         grade = st.session_state.current_grade
-        questions = get_questions(subject, grade)
+        questions = st.session_state.current_questions
 
         st.subheader(f"Тест по предмету: {subject} ({grade} класс)")
         st.write(f"Вопросов в тесте: {len(questions)}")
@@ -292,16 +323,21 @@ elif page == "Диагностика по всем предметам":
             st.session_state.diag_results = None
             st.session_state.current_diag_grade = diag_grade
 
+            # По одному СЛУЧАЙНОМУ вопросу из КАЖДОГО предмета -
+            # выбирается один раз здесь, при старте, и фиксируется
+            # в сессии, чтобы не менялся при каждом клике по радио-кнопке.
+            diag_questions = []
+            for subj in get_subjects():
+                subject_qs = get_questions(subj, diag_grade)
+                if subject_qs:
+                    q = dict(random.choice(subject_qs))
+                    q["subject"] = subj
+                    diag_questions.append(q)
+            st.session_state.diag_questions = shuffle_questions(diag_questions)
+
     if st.session_state.diag_started and not st.session_state.diag_finished:
         grade = st.session_state.current_diag_grade
-        # По одному (первому) вопросу из КАЖДОГО предмета этого класса
-        diag_questions = []
-        for subject in get_subjects():
-            subject_qs = get_questions(subject, grade)
-            if subject_qs:
-                q = dict(subject_qs[0])
-                q["subject"] = subject
-                diag_questions.append(q)
+        diag_questions = st.session_state.diag_questions
 
         st.subheader(f"Диагностический тест — {grade} класс, все предметы")
         st.caption(f"{len(diag_questions)} вопросов — по одному из каждого предмета")
