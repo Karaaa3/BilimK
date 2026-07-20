@@ -434,11 +434,29 @@ elif page == "Мой прогресс":
 
         df["Статус"] = df["Процент"].apply(status_emoji)
 
+        def highlight_percent(row):
+            """
+            Раскрашивает строку таблицы вручную по проценту освоения темы.
+            Специально НЕ используем Styler.background_gradient(), потому
+            что он требует matplotlib - лишнюю тяжёлую зависимость, которой
+            может не оказаться на сервере (именно это вызвало ImportError
+            на Streamlit Cloud). Простая раскраска по порогам не требует
+            вообще никаких дополнительных библиотек.
+            """
+            pct = row["Процент"]
+            if pct >= 70:
+                color = "background-color: #d4edda"  # мягкий зелёный
+            elif pct >= 40:
+                color = "background-color: #fff3cd"  # мягкий жёлтый
+            else:
+                color = "background-color: #f8d7da"  # мягкий красный
+            return [color] * len(row)
+
         for subject in df["Предмет"].unique():
             st.markdown(f"### {subject}")
             subject_df = df[df["Предмет"] == subject][["Тема", "Верно", "Всего", "Процент", "Статус"]]
             st.dataframe(
-                subject_df.style.background_gradient(subset=["Процент"], cmap="RdYlGn", vmin=0, vmax=100),
+                subject_df.style.apply(highlight_percent, axis=1),
                 width='stretch', hide_index=True,
             )
 
