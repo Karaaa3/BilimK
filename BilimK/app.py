@@ -202,7 +202,7 @@ with st.sidebar:
     st.divider()
     page = st.radio(
         "Что хотите сделать?",
-        ["Пройти тест", "Диагностика по всем предметам", "Мой прогресс", "🗂️ Банк ошибок"],
+        ["📝 Пройти тест", "🩺 Диагностика по всем предметам", "🗺️ Мой прогресс", "🗂️ Банк ошибок"],
     )
 
 st.title("📘 Персональный ИИ-тьютор")
@@ -226,7 +226,7 @@ elif (datetime.now() - last_diag).days >= 7:
 # СТРАНИЦА 1: ОБЫЧНЫЙ ТЕСТ ПО ОДНОМУ ПРЕДМЕТУ
 # ============================================================
 
-if page == "Пройти тест":
+if page == "📝 Пройти тест":
     with st.sidebar:
         st.header("Настройки теста")
         grade = st.selectbox("Выберите класс", get_grades(), format_func=lambda g: f"{g} класс")
@@ -313,7 +313,7 @@ if page == "Пройти тест":
 # СТРАНИЦА 2: ДИАГНОСТИКА ПО ВСЕМ ПРЕДМЕТАМ
 # ============================================================
 
-elif page == "Диагностика по всем предметам":
+elif page == "🩺 Диагностика по всем предметам":
     with st.sidebar:
         st.header("Диагностика")
         diag_grade = st.selectbox("Ваш класс", get_grades(), format_func=lambda g: f"{g} класс", key="diag_grade")
@@ -411,7 +411,7 @@ elif page == "Диагностика по всем предметам":
 # СТРАНИЦА 3: МОЯ КАРТА ПРОГРЕССА
 # ============================================================
 
-elif page == "Мой прогресс":
+elif page == "🗺️ Мой прогресс":
     st.subheader("🗺️ Карта прогресса")
 
     progress_rows = db.get_progress_map(username)
@@ -442,15 +442,19 @@ elif page == "Мой прогресс":
             может не оказаться на сервере (именно это вызвало ImportError
             на Streamlit Cloud). Простая раскраска по порогам не требует
             вообще никаких дополнительных библиотек.
+
+            ВАЖНО: явно задаём color: black - иначе в тёмной теме Streamlit
+            текст остаётся светлым по умолчанию и на светлом фоне ячейки
+            становится практически нечитаемым.
             """
             pct = row["Процент"]
             if pct >= 70:
-                color = "background-color: #d4edda"  # мягкий зелёный
+                style = "background-color: #d4edda; color: black"  # мягкий зелёный
             elif pct >= 40:
-                color = "background-color: #fff3cd"  # мягкий жёлтый
+                style = "background-color: #fff3cd; color: black"  # мягкий жёлтый
             else:
-                color = "background-color: #f8d7da"  # мягкий красный
-            return [color] * len(row)
+                style = "background-color: #f8d7da; color: black"  # мягкий красный
+            return [style] * len(row)
 
         for subject in df["Предмет"].unique():
             st.markdown(f"### {subject}")
