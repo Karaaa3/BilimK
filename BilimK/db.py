@@ -46,11 +46,20 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             student_name TEXT NOT NULL,
             subject TEXT NOT NULL,
+            grade INTEGER,
             total_questions INTEGER NOT NULL,
             correct_answers INTEGER NOT NULL,
             created_at TEXT NOT NULL
         )
     """)
+
+    # Миграция для баз, созданных ДО добавления поля grade (например,
+    # уже задеплоенное приложение на Streamlit Cloud с existing data/quiz.db).
+    # Если колонка уже есть — sqlite вернёт ошибку, которую мы просто игнорируем.
+    try:
+        cur.execute("ALTER TABLE tests ADD COLUMN grade INTEGER")
+    except sqlite3.OperationalError:
+        pass
 
     cur.execute("""
         CREATE TABLE IF NOT EXISTS answers (
@@ -70,7 +79,7 @@ def init_db():
     conn.close()
 
 
-def save_test_result(student_name: str, subject: str, total_questions: int,
+def save_test_result(student_name: str, subject: str, grade: int, total_questions: int,
                       correct_answers: int, answer_records: list) -> int:
     """
     Сохраняет результат прохождения теста + все ответы одним пакетом.
@@ -91,9 +100,9 @@ def save_test_result(student_name: str, subject: str, total_questions: int,
     cur = conn.cursor()
 
     cur.execute("""
-        INSERT INTO tests (student_name, subject, total_questions, correct_answers, created_at)
-        VALUES (?, ?, ?, ?, ?)
-    """, (student_name, subject, total_questions, correct_answers,
+        INSERT INTO tests (student_name, subject, grade, total_questions, correct_answers, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (student_name, subject, grade, total_questions, correct_answers,
           datetime.now().isoformat(timespec="seconds")))
 
     test_id = cur.lastrowid
