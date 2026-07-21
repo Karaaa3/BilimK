@@ -25,6 +25,7 @@ app.py
 """
 
 import concurrent.futures
+import os
 import random
 from datetime import datetime
 
@@ -40,6 +41,13 @@ from translations import t
 st.set_page_config(page_title="BilimK", page_icon="🏔")
 db.init_db()  # создаёт/мигрирует таблицы - безопасно вызывать при каждом запуске
 st.markdown(branding.inject_custom_css(), unsafe_allow_html=True)
+
+# Путь к логотипу строим ОТ РАСПОЛОЖЕНИЯ САМОГО app.py, а не от текущей
+# рабочей директории процесса - на Streamlit Cloud рабочая директория при
+# запуске не всегда совпадает с папкой репозитория, из-за чего просто
+# "assets/logo.png" иногда не находится (MediaFileStorageError).
+APP_DIR = os.path.dirname(os.path.abspath(__file__))
+LOGO_PATH = os.path.join(APP_DIR, "assets", "logo.png")
 
 if "lang" not in st.session_state:
     st.session_state.lang = "ru"
@@ -150,7 +158,7 @@ if not st.session_state.username:
 
     col_logo, col_header = st.columns([1, 4])
     with col_logo:
-        st.image("assets/logo.png", width=110)
+        st.image(LOGO_PATH, width=110) if os.path.exists(LOGO_PATH) else st.markdown("### 🏔")
     with col_header:
         st.markdown(
             branding.render_header(t("app_title"), t("app_tagline"), t("app_subtitle")),
@@ -241,7 +249,7 @@ progress_rows = db.get_progress_map(username)
 if not progress_rows:
     col_a, col_b, col_c = st.columns([1, 2, 1])
     with col_b:
-        st.image("assets/logo.png", width=140)
+        st.image(LOGO_PATH, width=140) if os.path.exists(LOGO_PATH) else st.markdown("## 🏔")
         st.markdown(
             f'<div class="bilimk-quote">{t("new_user_quote")}</div>',
             unsafe_allow_html=True,
