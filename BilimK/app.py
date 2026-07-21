@@ -3,22 +3,25 @@ app.py
 ------
 Главный файл Streamlit-приложения.
 
-СЦЕНАРИЙ РАБОТЫ ПРИЛОЖЕНИЯ (обновлённая версия с аккаунтами):
-1. Ученик регистрируется или входит в свой аккаунт (логин/пароль).
-2. При первом входе (или если прошло 7+ дней с последней диагностики)
-   приложение предлагает пройти ДИАГНОСТИЧЕСКИЙ тест — по одному вопросу
-   из КАЖДОГО предмета выбранного класса. Это даёт стартовую "карту"
-   сильных и слабых сторон ученика по всем предметам сразу.
-3. Ученик может в любой момент пройти обычный тест по одному предмету.
-4. По каждому неправильному ответу ИИ-тьютор (ai_tutor.py) объясняет
-   ошибку, а в конце строит персональный план обучения с реальными
+СЦЕНАРИЙ РАБОТЫ ПРИЛОЖЕНИЯ (с аккаунтами и двумя языками интерфейса):
+1. Ученик выбирает язык интерфейса (русский/казахский) и регистрируется
+   или входит в свой аккаунт.
+2. Язык интерфейса определяет СТРУКТУРУ ПРЕДМЕТОВ (тип школы):
+   - RU -> "Русский язык" и "Русская литература" отдельно,
+     "Қазақ тілі мен әдебиеті" вместе (структура русской школы).
+   - KZ -> "Қазақ тілі" и "Қазақ әдебиеті" отдельно,
+     "Орыс тілі мен әдебиеті" вместе (структура казахской школы).
+   Вопросы по "предметным" дисциплинам (Алгебра, Физика, История и т.д.)
+   показываются на выбранном языке интерфейса; языковые/литературные
+   предметы всегда на своём фиксированном языке (см. questions.py).
+3. При первом входе (или если прошло 7+ дней с последней диагностики)
+   приложение предлагает пройти ДИАГНОСТИЧЕСКИЙ тест по всем предметам.
+4. Ученик может в любой момент пройти обычный тест по одному предмету.
+5. По каждому неправильному ответу ИИ-тьютор объясняет ошибку НА ТОМ ЖЕ
+   ЯЗЫКЕ, что и вопрос, а в конце строит план обучения с реальными
    образовательными ресурсами.
-5. Раздел "Мой прогресс" показывает карту освоенных и слабых тем
-   по всем предметам на основе истории ВСЕХ пройденных тестов.
-
-Вся "умная" логика вынесена в отдельные модули (db.py, ai_tutor.py,
-questions.py) — интерфейс не завязан намертво на конкретного
-LLM-провайдера или структуру БД.
+6. "Мой прогресс" и "Банк ошибок" показывают карту освоенных/слабых тем
+   и накопленные ошибки по истории всех пройденных тестов.
 """
 
 import concurrent.futures
@@ -31,23 +34,21 @@ import streamlit as st
 import ai_tutor
 import db
 from questions import get_grades, get_questions, get_subjects
+from translations import t
 
 st.set_page_config(page_title="Тьютор для сельских школ", page_icon="📘")
 db.init_db()  # создаёт/мигрирует таблицы - безопасно вызывать при каждом запуске
+
+if "lang" not in st.session_state:
+    st.session_state.lang = "ru"
 
 
 def shuffle_questions(questions: list) -> list:
     """
     Перемешивает порядок вопросов И порядок вариантов ответа внутри
-    каждого вопроса. Банк вопросов у нас пока небольшой (5 на класс
-    по каждому предмету) — без перемешивания ученик, проходящий тест
-    повторно через неделю, увидел бы буквально идентичный тест
-    с правильным ответом на том же месте. Перемешивание не увеличивает
-    число уникальных вопросов, но убирает эффект "я просто запомнил,
-    что правильный ответ - вариант Б".
-
-    Возвращает НОВЫЙ список (исходный questions не изменяется),
-    с пересчитанным correct_index под новый порядок вариантов.
+    каждого вопроса, чтобы повторное прохождение теста не выглядело
+    буквально идентичным. Возвращает НОВЫЙ список с пересчитанным
+    correct_index под новый порядок вариантов.
     """
     shuffled = []
     for q in random.sample(questions, len(questions)):
@@ -61,20 +62,11 @@ def shuffle_questions(questions: list) -> list:
     return shuffled
 
 
-# ============================================================
-# ОБЩАЯ ЛОГИКА ПРОВЕРКИ ОТВЕТОВ (используется и обычным тестом,
-# и диагностикой - вынесена в одну функцию, чтобы не дублировать код)
-# ============================================================
-
-def grade_and_explain(questions: list, user_answers: list):
+def grade_and_explain(questions: list, user_answers: list, lang: str):
     """
     Проверяет ответы ученика и параллельно запрашивает у ИИ-тьютора
-    объяснения для неверных ответов (см. комментарии в ai_tutor.py
-    про ускорение через ThreadPoolExecutor).
-
-    Каждый элемент questions должен содержать ключи:
-    question, options, correct_index, topic, и опционально subject
-    (нужен для диагностики, где вопросы из разных предметов вперемешку).
+    объяснения для неверных ответов - НА ЯЗЫКЕ lang, чтобы объяснение
+    совпадало с языком самого вопроса.
 
     Возвращает: (answer_records, correct_count, wrong_topics)
     """
@@ -112,6 +104,7 @@ def grade_and_explain(questions: list, user_answers: list):
                     topic=q["topic"],
                     student_answer=user_choice,
                     correct_answer=correct_option,
+                    lang=lang,
                 ): idx
                 for idx, q, user_choice, correct_option in wrong_items
             }
@@ -125,55 +118,63 @@ def grade_and_explain(questions: list, user_answers: list):
 def render_answer_review(answer_records: list):
     """Отрисовывает разбор каждого вопроса - используется и тестом, и диагностикой."""
     for i, rec in enumerate(answer_records):
-        label_prefix = f"{rec['subject']}: " if rec.get("subject") else ""
+        prefix = f"[{rec['subject']}] " if rec.get("subject") else ""
         if rec["is_correct"]:
-            with st.expander(f"✅ {label_prefix}Вопрос {i + 1} — верно", expanded=False):
+            with st.expander(t("correct_expander", prefix=prefix, num=i + 1), expanded=False):
                 st.write(rec["question_text"])
         else:
-            with st.expander(f"❌ {label_prefix}Вопрос {i + 1} — есть над чем поработать", expanded=True):
-                st.write(f"**Вопрос:** {rec['question_text']}")
-                st.write(f"Ваш ответ: _{rec['student_answer']}_")
-                st.write(f"Правильный ответ: **{rec['correct_answer']}**")
+            with st.expander(t("wrong_expander", prefix=prefix, num=i + 1), expanded=True):
+                st.write(t("question_label", text=rec["question_text"]))
+                st.write(t("your_answer_label", answer=rec["student_answer"]))
+                st.write(t("correct_answer_label", answer=rec["correct_answer"]))
                 st.markdown("---")
-                st.markdown(f"🧑‍🏫 **Объяснение тьютора:**\n\n{rec['ai_explanation']}")
+                st.markdown(t("tutor_explanation_label", explanation=rec["ai_explanation"]))
 
 
 # ============================================================
-# ЭКРАН ВХОДА / РЕГИСТРАЦИИ
+# ЭКРАН ВХОДА / РЕГИСТРАЦИИ (+ выбор языка интерфейса)
 # ============================================================
 
 if "username" not in st.session_state:
     st.session_state.username = None
 
 if not st.session_state.username:
-    st.title("📘 Персональный ИИ-тьютор")
-    st.caption("Войдите в аккаунт, чтобы сохранять свой прогресс между занятиями")
+    lang_choice = st.radio(
+        t("language_selector_label"), ["Русский", "Қазақша"],
+        index=0 if st.session_state.lang == "ru" else 1, horizontal=True,
+        key="lang_selector",
+    )
+    st.session_state.lang = "ru" if lang_choice == "Русский" else "kz"
 
-    tab_login, tab_register = st.tabs(["Вход", "Регистрация"])
+    st.title(t("app_title"))
+    st.caption(t("app_caption"))
+    st.caption(t("login_caption"))
+
+    tab_login, tab_register = st.tabs([t("tab_login"), t("tab_register")])
 
     with tab_login:
         with st.form("login_form"):
-            login_username = st.text_input("Логин", key="login_username")
-            login_password = st.text_input("Пароль", type="password", key="login_password")
-            login_submitted = st.form_submit_button("Войти")
+            login_username = st.text_input(t("login_field"), key="login_username")
+            login_password = st.text_input(t("password_field"), type="password", key="login_password")
+            login_submitted = st.form_submit_button(t("login_button"))
 
         if login_submitted:
             if db.authenticate_user(login_username, login_password):
                 st.session_state.username = login_username.strip()
                 st.rerun()
             else:
-                st.error("Неверный логин или пароль.")
+                st.error(t("login_error"))
 
     with tab_register:
         with st.form("register_form"):
-            reg_username = st.text_input("Придумайте логин", key="reg_username")
-            reg_password = st.text_input("Придумайте пароль (от 4 символов)", type="password", key="reg_password")
-            reg_submitted = st.form_submit_button("Зарегистрироваться")
+            reg_username = st.text_input(t("register_login_field"), key="reg_username")
+            reg_password = st.text_input(t("register_password_field"), type="password", key="reg_password")
+            reg_submitted = st.form_submit_button(t("register_button"))
 
         if reg_submitted:
             ok, message = db.register_user(reg_username, reg_password)
             if ok:
-                st.success(f"{message} Теперь войдите во вкладке «Вход».")
+                st.success(f"{message} {t('register_success_suffix')}")
             else:
                 st.error(message)
 
@@ -185,6 +186,7 @@ if not st.session_state.username:
 # ============================================================
 
 username = st.session_state.username
+lang = st.session_state.lang
 
 for key, default in [
     ("test_started", False), ("test_finished", False), ("results", None),
@@ -194,45 +196,38 @@ for key, default in [
         st.session_state[key] = default
 
 with st.sidebar:
-    st.write(f"👋 Привет, **{username}**!")
-    if st.button("Выйти", width='stretch'):
+    st.write(t("greeting", username=username))
+    if st.button(t("logout_button"), width='stretch'):
         st.session_state.username = None
         st.rerun()
 
     st.divider()
     page = st.radio(
-        "Что хотите сделать?",
-        ["📝 Пройти тест", "🩺 Диагностика по всем предметам", "🗺️ Мой прогресс", "🗂️ Банк ошибок"],
+        t("menu_label"),
+        [t("page_test"), t("page_diagnostic"), t("page_progress"), t("page_mistakes")],
     )
 
-st.title("📘 Персональный ИИ-тьютор")
+st.title(t("app_title"))
 
 # Баннер-напоминание о диагностике: при первом входе или если прошло 7+ дней
 last_diag = db.get_last_diagnostic(username)
 if last_diag is None:
-    st.info(
-        "👋 Вы ещё не проходили общую диагностику. Рекомендуем начать с неё — "
-        "выберите «Диагностика по всем предметам» в меню слева, чтобы сразу "
-        "увидеть карту своих сильных и слабых сторон по всем предметам."
-    )
+    st.info(t("diag_never_done", page_diagnostic=t("page_diagnostic")))
 elif (datetime.now() - last_diag).days >= 7:
-    st.info(
-        f"📅 С последней диагностики прошло {(datetime.now() - last_diag).days} дн. "
-        "Рекомендуем пройти её снова, чтобы отследить прогресс за неделю."
-    )
+    st.info(t("diag_week_passed", days=(datetime.now() - last_diag).days))
 
 
 # ============================================================
 # СТРАНИЦА 1: ОБЫЧНЫЙ ТЕСТ ПО ОДНОМУ ПРЕДМЕТУ
 # ============================================================
 
-if page == "📝 Пройти тест":
+if page == t("page_test"):
     with st.sidebar:
-        st.header("Настройки теста")
-        grade = st.selectbox("Выберите класс", get_grades(), format_func=lambda g: f"{g} класс")
-        subject = st.selectbox("Выберите предмет", get_subjects())
+        st.header(t("settings_header"))
+        grade = st.selectbox(t("grade_label"), get_grades(), format_func=lambda g: t("grade_format", grade=g))
+        subject = st.selectbox(t("subject_label"), get_subjects(lang))
 
-        if st.button("▶️ Начать тест", width='stretch'):
+        if st.button(t("start_test_button"), width='stretch'):
             st.session_state.test_started = True
             st.session_state.test_finished = False
             st.session_state.results = None
@@ -242,18 +237,18 @@ if page == "📝 Пройти тест":
             # иначе порядок вопросов/вариантов "плыл" бы при каждом
             # клике (Streamlit пересчитывает весь скрипт заново
             # на любое взаимодействие, включая выбор ответа).
-            st.session_state.current_questions = shuffle_questions(get_questions(subject, grade))
+            st.session_state.current_questions = shuffle_questions(get_questions(subject, grade, lang))
 
     if st.session_state.test_started and not st.session_state.test_finished:
         subject = st.session_state.current_subject
         grade = st.session_state.current_grade
         questions = st.session_state.current_questions
 
-        st.subheader(f"Тест по предмету: {subject} ({grade} класс)")
-        st.write(f"Вопросов в тесте: {len(questions)}")
+        st.subheader(t("test_subheader", subject=subject, grade=grade))
+        st.write(t("questions_count", count=len(questions)))
 
         if not questions:
-            st.warning("Для этого предмета пока нет вопросов на выбранный класс.")
+            st.warning(t("no_questions_warning"))
             st.stop()
 
         with st.form("quiz_form"):
@@ -261,14 +256,14 @@ if page == "📝 Пройти тест":
             for i, q in enumerate(questions):
                 choice = st.radio(f"**{i + 1}. {q['question']}**", q["options"], index=None, key=f"q_{i}")
                 user_answers.append(choice)
-            submitted = st.form_submit_button("✅ Завершить тест")
+            submitted = st.form_submit_button(t("finish_test_button"))
 
         if submitted:
             if any(a is None for a in user_answers):
-                st.warning("Пожалуйста, ответьте на все вопросы перед завершением теста.")
+                st.warning(t("answer_all_warning"))
             else:
-                with st.spinner("ИИ-тьютор анализирует ваши ответы..."):
-                    answer_records, correct_count, wrong_topics = grade_and_explain(questions, user_answers)
+                with st.spinner(t("ai_spinner")):
+                    answer_records, correct_count, wrong_topics = grade_and_explain(questions, user_answers, lang)
 
                     db.save_test_result(
                         student_name=username, subject=subject, grade=grade,
@@ -277,8 +272,8 @@ if page == "📝 Пройти тест":
                     )
 
                     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-                        future_summary = executor.submit(ai_tutor.get_summary_feedback, subject, wrong_topics)
-                        future_plan = executor.submit(ai_tutor.get_learning_plan, subject, wrong_topics)
+                        future_summary = executor.submit(ai_tutor.get_summary_feedback, subject, wrong_topics, lang)
+                        future_plan = executor.submit(ai_tutor.get_learning_plan, subject, wrong_topics, lang)
                         summary = future_summary.result()
                         learning_plan = future_plan.result()
 
@@ -291,33 +286,34 @@ if page == "📝 Пройти тест":
 
     if st.session_state.test_finished and st.session_state.results:
         results = st.session_state.results
-        st.subheader("📊 Результат теста")
-        st.metric("Правильных ответов", f"{results['correct_count']} / {results['total']}")
-        st.info(f"**Общая рекомендация:** {results['summary']}")
-        st.subheader("📚 Персональный план обучения")
+        st.subheader(t("result_subheader"))
+        st.metric(t("correct_answers_metric"), f"{results['correct_count']} / {results['total']}")
+        st.info(t("summary_label", summary=results["summary"]))
+        st.subheader(t("plan_subheader"))
         st.markdown(results["learning_plan"])
-        st.subheader("🔍 Разбор ответов")
+        st.subheader(t("review_subheader"))
         render_answer_review(results["answer_records"])
 
-        if st.button("🔁 Пройти другой тест"):
+        if st.button(t("retry_test_button")):
             st.session_state.test_started = False
             st.session_state.test_finished = False
             st.session_state.results = None
             st.rerun()
 
     if not st.session_state.test_started and not st.session_state.test_finished:
-        st.write("👈 Выберите класс и предмет слева, затем нажмите **«Начать тест»**.")
+        st.write(t("test_idle_hint"))
 
 
 # ============================================================
 # СТРАНИЦА 2: ДИАГНОСТИКА ПО ВСЕМ ПРЕДМЕТАМ
 # ============================================================
 
-elif page == "🩺 Диагностика по всем предметам":
+elif page == t("page_diagnostic"):
     with st.sidebar:
-        st.header("Диагностика")
-        diag_grade = st.selectbox("Ваш класс", get_grades(), format_func=lambda g: f"{g} класс", key="diag_grade")
-        if st.button("▶️ Начать диагностику", width='stretch'):
+        st.header(t("diag_header"))
+        diag_grade = st.selectbox(t("diag_grade_label"), get_grades(),
+                                     format_func=lambda g: t("grade_format", grade=g), key="diag_grade")
+        if st.button(t("start_diag_button"), width='stretch'):
             st.session_state.diag_started = True
             st.session_state.diag_finished = False
             st.session_state.diag_results = None
@@ -327,8 +323,8 @@ elif page == "🩺 Диагностика по всем предметам":
             # выбирается один раз здесь, при старте, и фиксируется
             # в сессии, чтобы не менялся при каждом клике по радио-кнопке.
             diag_questions = []
-            for subj in get_subjects():
-                subject_qs = get_questions(subj, diag_grade)
+            for subj in get_subjects(lang):
+                subject_qs = get_questions(subj, diag_grade, lang)
                 if subject_qs:
                     q = dict(random.choice(subject_qs))
                     q["subject"] = subj
@@ -339,8 +335,8 @@ elif page == "🩺 Диагностика по всем предметам":
         grade = st.session_state.current_diag_grade
         diag_questions = st.session_state.diag_questions
 
-        st.subheader(f"Диагностический тест — {grade} класс, все предметы")
-        st.caption(f"{len(diag_questions)} вопросов — по одному из каждого предмета")
+        st.subheader(t("diag_subheader", grade=grade))
+        st.caption(t("diag_caption", count=len(diag_questions)))
 
         with st.form("diag_form"):
             user_answers = []
@@ -348,14 +344,14 @@ elif page == "🩺 Диагностика по всем предметам":
                 choice = st.radio(f"**{i + 1}. [{q['subject']}] {q['question']}**",
                                     q["options"], index=None, key=f"diag_q_{i}")
                 user_answers.append(choice)
-            submitted = st.form_submit_button("✅ Завершить диагностику")
+            submitted = st.form_submit_button(t("finish_diag_button"))
 
         if submitted:
             if any(a is None for a in user_answers):
-                st.warning("Пожалуйста, ответьте на все вопросы.")
+                st.warning(t("answer_all_diag_warning"))
             else:
-                with st.spinner("ИИ-тьютор анализирует результаты диагностики..."):
-                    answer_records, correct_count, wrong_topics = grade_and_explain(diag_questions, user_answers)
+                with st.spinner(t("diag_spinner")):
+                    answer_records, correct_count, wrong_topics = grade_and_explain(diag_questions, user_answers, lang)
 
                     # Сохраняем отдельной записью в tests для КАЖДОГО предмета -
                     # так карта прогресса потом сможет корректно сгруппировать
@@ -378,7 +374,9 @@ elif page == "🩺 Диагностика по всем предметам":
                         f"{rec['subject']}: {rec['topic']}"
                         for rec in answer_records if not rec["is_correct"]
                     ]
-                    learning_plan = ai_tutor.get_learning_plan("несколько предметов сразу", labeled_wrong_topics)
+                    learning_plan = ai_tutor.get_learning_plan(
+                        "несколько предметов сразу", labeled_wrong_topics, lang
+                    )
 
                 st.session_state.diag_results = {
                     "correct_count": correct_count, "total": len(diag_questions),
@@ -389,50 +387,51 @@ elif page == "🩺 Диагностика по всем предметам":
 
     if st.session_state.diag_finished and st.session_state.diag_results:
         results = st.session_state.diag_results
-        st.subheader("📊 Результат диагностики")
-        st.metric("Правильных ответов", f"{results['correct_count']} / {results['total']}")
-        st.subheader("📚 Общий план обучения по итогам диагностики")
+        st.subheader(t("diag_result_subheader"))
+        st.metric(t("correct_answers_metric"), f"{results['correct_count']} / {results['total']}")
+        st.subheader(t("diag_plan_subheader"))
         st.markdown(results["learning_plan"])
-        st.subheader("🔍 Разбор по предметам")
+        st.subheader(t("diag_review_subheader"))
         render_answer_review(results["answer_records"])
 
-        if st.button("🔁 Пройти диагностику заново"):
+        if st.button(t("retry_diag_button")):
             st.session_state.diag_started = False
             st.session_state.diag_finished = False
             st.session_state.diag_results = None
             st.rerun()
 
     if not st.session_state.diag_started and not st.session_state.diag_finished:
-        st.write("👈 Выберите класс слева и нажмите **«Начать диагностику»** — "
-                    "это займёт всего пару минут и покажет карту по всем предметам сразу.")
+        st.write(t("diag_idle_hint"))
 
 
 # ============================================================
 # СТРАНИЦА 3: МОЯ КАРТА ПРОГРЕССА
 # ============================================================
 
-elif page == "🗺️ Мой прогресс":
-    st.subheader("🗺️ Карта прогресса")
+elif page == t("page_progress"):
+    st.subheader(t("progress_subheader"))
 
     progress_rows = db.get_progress_map(username)
 
     if not progress_rows:
-        st.write(
-            "Пока нет данных о прогрессе — пройдите хотя бы один тест "
-            "или диагностику, и здесь появится карта ваших тем."
-        )
+        st.write(t("progress_empty"))
     else:
-        df = pd.DataFrame(progress_rows, columns=["Предмет", "Тема", "Верно", "Всего"])
-        df["Процент"] = (df["Верно"] / df["Всего"] * 100).round(0).astype(int)
+        col_subject, col_topic, col_correct, col_total = (
+            t("col_subject"), t("col_topic"), t("col_correct"), t("col_total")
+        )
+        col_percent, col_status = t("col_percent"), t("col_status")
 
-        def status_emoji(pct):
+        df = pd.DataFrame(progress_rows, columns=[col_subject, col_topic, col_correct, col_total])
+        df[col_percent] = (df[col_correct] / df[col_total] * 100).round(0).astype(int)
+
+        def status_label(pct):
             if pct >= 70:
-                return "✅ Освоено"
+                return t("status_mastered")
             elif pct >= 40:
-                return "⚠️ Нужно повторить"
-            return "❌ Слабое место"
+                return t("status_review")
+            return t("status_weak")
 
-        df["Статус"] = df["Процент"].apply(status_emoji)
+        df[col_status] = df[col_percent].apply(status_label)
 
         def highlight_percent(row):
             """
@@ -447,7 +446,7 @@ elif page == "🗺️ Мой прогресс":
             текст остаётся светлым по умолчанию и на светлом фоне ячейки
             становится практически нечитаемым.
             """
-            pct = row["Процент"]
+            pct = row[col_percent]
             if pct >= 70:
                 style = "background-color: #d4edda; color: black"  # мягкий зелёный
             elif pct >= 40:
@@ -456,49 +455,40 @@ elif page == "🗺️ Мой прогресс":
                 style = "background-color: #f8d7da; color: black"  # мягкий красный
             return [style] * len(row)
 
-        for subject in df["Предмет"].unique():
+        for subject in df[col_subject].unique():
             st.markdown(f"### {subject}")
-            subject_df = df[df["Предмет"] == subject][["Тема", "Верно", "Всего", "Процент", "Статус"]]
+            subject_df = df[df[col_subject] == subject][[col_topic, col_correct, col_total, col_percent, col_status]]
             st.dataframe(
                 subject_df.style.apply(highlight_percent, axis=1),
                 width='stretch', hide_index=True,
             )
 
-        weak_count = (df["Процент"] < 40).sum()
+        weak_count = (df[col_percent] < 40).sum()
         if weak_count > 0:
-            st.warning(f"⚠️ Слабых мест сейчас: {weak_count}. Пройдите тест по этим темам ещё раз, чтобы закрыть пробелы.")
+            st.warning(t("weak_topics_warning", count=weak_count))
         else:
-            st.success("🎉 Явных слабых мест не найдено — отличная работа!")
+            st.success(t("no_weak_topics"))
 
 
 # ============================================================
 # СТРАНИЦА 4: БАНК ОШИБОК
 # ============================================================
-# Идея: ученик сдаёт тесты по разным предметам в разное время
-# (сегодня - русский, завтра - физика, через неделю - информатика),
+# Идея: ученик сдаёт тесты по разным предметам в разное время,
 # и вместо того чтобы вручную выписывать себе, где он ошибся,
 # приложение само копит ВСЕ его ошибки в одном месте - с уже готовым
 # объяснением от ИИ-тьютора (оно сохранено ещё в момент прохождения
-# теста, поэтому здесь ничего заново не генерируется - только читаем
-# готовые данные из базы, быстро и без дополнительных затрат на API).
+# теста, поэтому здесь ничего заново не генерируется).
 
-elif page == "🗂️ Банк ошибок":
-    st.subheader("🗂️ Банк ошибок")
-    st.caption(
-        "Здесь автоматически собираются все ваши неверные ответы со всех "
-        "пройденных тестов и диагностик - ничего вручную сохранять не нужно."
-    )
+elif page == t("page_mistakes"):
+    st.subheader(t("mistakes_subheader"))
+    st.caption(t("mistakes_caption"))
 
     mistakes = db.get_mistake_bank(username)
 
     if not mistakes:
-        st.write(
-            "Пока ошибок не накопилось — либо вы ещё не проходили тесты, "
-            "либо ответили на всё верно. Отличный результат!"
-        )
+        st.write(t("mistakes_empty"))
     else:
-        # Сводка: по каким темам ошибок больше всего - помогает сразу
-        # понять, за что браться в первую очередь, не листая весь список
+        # Сводка: по каким темам ошибок больше всего
         topic_counts = {}
         for row in mistakes:
             subject, grade, topic, *_ = row
@@ -506,9 +496,9 @@ elif page == "🗂️ Банк ошибок":
             topic_counts[key] = topic_counts.get(key, 0) + 1
 
         top_weak = sorted(topic_counts.items(), key=lambda x: x[1], reverse=True)[:5]
-        st.markdown("**Чаще всего ошибки встречаются в темах:**")
+        st.markdown(t("top_weak_label"))
         for (subject, topic), count in top_weak:
-            st.write(f"- {subject} → {topic} ({count} ошибок)")
+            st.write(t("top_weak_item", subject=subject, topic=topic, count=count))
 
         st.divider()
 
@@ -518,20 +508,18 @@ elif page == "🗂️ Банк ошибок":
             if row[0] not in subjects_with_mistakes:
                 subjects_with_mistakes.append(row[0])
 
-        selected_subject = st.selectbox(
-            "Показать ошибки по предмету:",
-            ["Все предметы"] + subjects_with_mistakes,
-        )
+        all_subjects_label = t("all_subjects_option")
+        selected_subject = st.selectbox(t("filter_by_subject"), [all_subjects_label] + subjects_with_mistakes)
 
         for subject, grade, topic, question_text, student_answer, correct_answer, ai_explanation, created_at in mistakes:
-            if selected_subject != "Все предметы" and subject != selected_subject:
+            if selected_subject != all_subjects_label and subject != selected_subject:
                 continue
 
             date_str = created_at.split("T")[0] if created_at else ""
-            with st.expander(f"❌ [{subject}, {grade} класс] {topic} — {date_str}"):
-                st.write(f"**Вопрос:** {question_text}")
-                st.write(f"Ваш ответ: _{student_answer}_")
-                st.write(f"Правильный ответ: **{correct_answer}**")
+            with st.expander(t("mistake_expander", subject=subject, grade=grade, topic=topic, date=date_str)):
+                st.write(t("question_label", text=question_text))
+                st.write(t("your_answer_label", answer=student_answer))
+                st.write(t("correct_answer_label", answer=correct_answer))
                 if ai_explanation:
                     st.markdown("---")
-                    st.markdown(f"🧑‍🏫 **Объяснение тьютора:**\n\n{ai_explanation}")
+                    st.markdown(t("tutor_explanation_label", explanation=ai_explanation))
