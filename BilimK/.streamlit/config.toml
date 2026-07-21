@@ -1,0 +1,8 @@
+[theme]
+# Фирменная палитра BilimK: бирюзовый (акценты/кнопки/прогресс),
+# тёмно-лазурный (текст/заголовки), белый (фон).
+primaryColor = "#27A295"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F0F6F5"
+textColor = "#11547D"
+font = "sans serif"

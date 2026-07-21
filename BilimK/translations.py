@@ -17,7 +17,19 @@ import streamlit as st
 TRANSLATIONS = {
     "ru": {
         "language_selector_label": "Язык интерфейса / Тіл",
-        "app_title": "📘 Персональный ИИ-тьютор",
+        "app_title": "BilimK",
+        "app_tagline": "Поднимайся к вершине знаний.",
+        "app_subtitle": "Персональный ИИ-помощник",
+        "new_user_quote": "«Гору осиливает тот, кто идёт, а не тот, кто ждёт у подножия.»",
+        "start_diagnostic_cta": "Начните с диагностики, чтобы проложить свой путь к вершине",
+        "dashboard_welcome": "👋 Добро пожаловать, {username}!",
+        "dashboard_recommended": "Сегодня рекомендуется",
+        "dashboard_no_recommendation": "Пройдите диагностику, чтобы получить рекомендацию на сегодня",
+        "dashboard_daily_goal": "🎯 Цель дня",
+        "dashboard_daily_goal_progress": "{done} из {goal} вопросов",
+        "dashboard_streak": "Серия",
+        "dashboard_streak_days": "{days} дн.",
+        "dashboard_overall_progress": "📈 Общий прогресс",
         "app_caption": "Пробный тест + разбор ошибок для учеников 8–11 классов",
         "login_caption": "Войдите в аккаунт, чтобы сохранять свой прогресс между занятиями",
         "tab_login": "Вход",
@@ -99,6 +111,9 @@ TRANSLATIONS = {
         "weak_topics_warning": "⚠️ Слабых мест сейчас: {count}. Пройдите тест по этим темам ещё раз, чтобы закрыть пробелы.",
         "no_weak_topics": "🎉 Явных слабых мест не найдено — отличная работа!",
         "mistakes_subheader": "🗂️ Банк ошибок",
+        "stat_total_mistakes": "Всего ошибок",
+        "stat_weak_topics": "Слабых тем",
+        "stat_fixed_topics": "Исправлено",
         "mistakes_caption": (
             "Здесь автоматически собираются все ваши неверные ответы со всех "
             "пройденных тестов и диагностик - ничего вручную сохранять не нужно."
@@ -115,7 +130,19 @@ TRANSLATIONS = {
     },
     "kz": {
         "language_selector_label": "Язык интерфейса / Тіл",
-        "app_title": "📘 Жеке ИИ-тьютор",
+        "app_title": "BilimK",
+        "app_tagline": "Білім шыңына қарай көтеріл.",
+        "app_subtitle": "Жеке ИИ-көмекші",
+        "new_user_quote": "«Тауды бағындыратын - тоқтап тұрған емес, алға жылжыған адам.»",
+        "start_diagnostic_cta": "Шыңға апаратын жолды белгілеу үшін диагностикадан бастаңыз",
+        "dashboard_welcome": "👋 Қош келдіңіз, {username}!",
+        "dashboard_recommended": "Бүгін ұсынылады",
+        "dashboard_no_recommendation": "Бүгінгі ұсынысты алу үшін диагностика тапсырыңыз",
+        "dashboard_daily_goal": "🎯 Күндізгі мақсат",
+        "dashboard_daily_goal_progress": "{goal} сұрақтың {done}",
+        "dashboard_streak": "Серия",
+        "dashboard_streak_days": "{days} күн",
+        "dashboard_overall_progress": "📈 Жалпы прогресс",
         "app_caption": "8–11 сынып оқушыларына арналған сынама тест және қателерді талдау",
         "login_caption": "Прогресіңізді сақтау үшін аккаунтқа кіріңіз",
         "tab_login": "Кіру",
@@ -197,6 +224,9 @@ TRANSLATIONS = {
         "weak_topics_warning": "⚠️ Қазіргі әлсіз тұстар саны: {count}. Пробелдерді жабу үшін осы тақырыптар бойынша тестті қайта тапсырыңыз.",
         "no_weak_topics": "🎉 Айқын әлсіз тұстар табылған жоқ — керемет жұмыс!",
         "mistakes_subheader": "🗂️ Қателер банкі",
+        "stat_total_mistakes": "Барлық қателер",
+        "stat_weak_topics": "Әлсіз тақырыптар",
+        "stat_fixed_topics": "Түзетілді",
         "mistakes_caption": (
             "Мұнда барлық тапсырылған тесттер мен диагностикалардан барлық қате "
             "жауаптарыңыз автоматты түрде жиналады - қолмен ештеңе сақтаудың қажеті жоқ."

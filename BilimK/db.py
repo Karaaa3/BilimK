@@ -15,7 +15,7 @@ import hashlib
 import os
 import secrets
 import sqlite3
-from datetime import datetime
+from datetime import datetime, date, timedelta
 
 DB_PATH = "data/quiz.db"
 
@@ -106,6 +106,17 @@ def init_db():
         )
     """)
 
+    # Миграция для баз, созданных ДО добавления "серии" (streak) -
+    # сколько дней подряд ученик занимается хотя бы один раз в день.
+    try:
+        cur.execute("ALTER TABLE users ADD COLUMN streak_days INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        cur.execute("ALTER TABLE users ADD COLUMN last_practice_date TEXT")
+    except sqlite3.OperationalError:
+        pass
+
     conn.commit()
     conn.close()
 
@@ -162,7 +173,100 @@ def save_test_result(student_name: str, subject: str, grade: int, total_question
 
     conn.commit()
     conn.close()
+
+    # Обновляем "серию" (streak) - сколько дней подряд ученик занимается.
+    # Делаем это здесь, а не отдельным вызовом в app.py, чтобы streak
+    # обновлялся ОДИНАКОВО и для обычного теста, и для диагностики
+    # (диагностика сохраняет несколько записей через save_test_result,
+    # по одной на предмет - update_streak при этом идемпотентен в рамках
+    # одного дня, повторный вызов в тот же день ничего не портит).
+    if username:
+        update_streak(username)
+
     return test_id
+
+
+def update_streak(username: str) -> int:
+    """
+    Обновляет "серию" дней подряд, когда ученик занимался.
+    Логика:
+    - Если ученик уже отмечался сегодня - серия не меняется.
+    - Если последний раз занимался вчера - серия увеличивается на 1.
+    - Если был перерыв (позавчера и раньше) или это первый раз - серия
+      начинается заново с 1.
+    Возвращает текущее значение серии после обновления.
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT streak_days, last_practice_date FROM users WHERE username = ?", (username,))
+    row = cur.fetchone()
+    if not row:
+        conn.close()
+        return 0
+
+    streak_days, last_date_str = row
+    streak_days = streak_days or 0
+    today = date.today()
+
+    if last_date_str:
+        last_date = date.fromisoformat(last_date_str)
+        if last_date == today:
+            pass  # уже отмечались сегодня - серия не меняется
+        elif last_date == today - timedelta(days=1):
+            streak_days += 1
+        else:
+            streak_days = 1
+    else:
+        streak_days = 1
+
+    cur.execute(
+        "UPDATE users SET streak_days = ?, last_practice_date = ? WHERE username = ?",
+        (streak_days, today.isoformat(), username),
+    )
+    conn.commit()
+    conn.close()
+    return streak_days
+
+
+def get_streak(username: str) -> int:
+    """
+    Возвращает ТЕКУЩУЮ действующую серию дней. Если с последнего занятия
+    прошло больше суток (пропущен хотя бы один день), серия считается
+    прерванной и отображается как 0, даже если в базе ещё хранится
+    старое число - серия сбрасывается автоматически при следующем
+    занятии через update_streak(), но для ОТОБРАЖЕНИЯ (до этого момента)
+    нам нужно честно показать, что серия уже не действует.
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT streak_days, last_practice_date FROM users WHERE username = ?", (username,))
+    row = cur.fetchone()
+    conn.close()
+
+    if not row or not row[1]:
+        return 0
+
+    streak_days, last_date_str = row
+    last_date = date.fromisoformat(last_date_str)
+    if (date.today() - last_date).days <= 1:
+        return streak_days or 0
+    return 0
+
+
+def get_today_answers_count(username: str) -> int:
+    """Считает, на сколько вопросов ученик уже ответил СЕГОДНЯ (для 'цели дня')."""
+    conn = get_connection()
+    cur = conn.cursor()
+    today = date.today().isoformat()
+    cur.execute("""
+        SELECT COUNT(*)
+        FROM answers a
+        JOIN tests t ON a.test_id = t.id
+        WHERE t.username = ? AND date(t.created_at) = ?
+    """, (username, today))
+    count = cur.fetchone()[0]
+    conn.close()
+    return count
 
 
 def get_student_history(student_name: str):

@@ -32,12 +32,14 @@ import pandas as pd
 import streamlit as st
 
 import ai_tutor
+import branding
 import db
 from questions import get_grades, get_questions, get_subjects
 from translations import t
 
-st.set_page_config(page_title="Тьютор для сельских школ", page_icon="📘")
+st.set_page_config(page_title="BilimK", page_icon="🏔")
 db.init_db()  # создаёт/мигрирует таблицы - безопасно вызывать при каждом запуске
+st.markdown(branding.inject_custom_css(), unsafe_allow_html=True)
 
 if "lang" not in st.session_state:
     st.session_state.lang = "ru"
@@ -146,8 +148,14 @@ if not st.session_state.username:
     )
     st.session_state.lang = "ru" if lang_choice == "Русский" else "kz"
 
-    st.title(t("app_title"))
-    st.caption(t("app_caption"))
+    col_logo, col_header = st.columns([1, 4])
+    with col_logo:
+        st.image("assets/logo.png", width=110)
+    with col_header:
+        st.markdown(
+            branding.render_header(t("app_title"), t("app_tagline"), t("app_subtitle")),
+            unsafe_allow_html=True,
+        )
     st.caption(t("login_caption"))
 
     tab_login, tab_register = st.tabs([t("tab_login"), t("tab_register")])
@@ -196,18 +204,88 @@ for key, default in [
         st.session_state[key] = default
 
 with st.sidebar:
-    st.write(t("greeting", username=username))
-    if st.button(t("logout_button"), width='stretch'):
-        st.session_state.username = None
-        st.rerun()
-
+    st.markdown(
+        f'<div style="text-align:center; padding: 6px 0 14px 0;">'
+        f'<span style="font-size:1.6rem;">🏔</span> '
+        f'<span style="font-size:1.3rem; font-weight:800; color:{branding.NAVY};">BilimK</span>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
     st.divider()
+
     page = st.radio(
         t("menu_label"),
         [t("page_test"), t("page_diagnostic"), t("page_progress"), t("page_mistakes")],
     )
 
-st.title(t("app_title"))
+    st.divider()
+    st.write(t("greeting", username=username))
+    if st.button(t("logout_button"), width='stretch'):
+        st.session_state.username = None
+        st.rerun()
+
+st.markdown(
+    branding.render_header(t("app_title"), t("app_tagline"), t("app_subtitle")),
+    unsafe_allow_html=True,
+)
+
+# ============================================================
+# ДАШБОРД: показывается на любой странице сверху - для новых учеников
+# (ещё нет данных о прогрессе) показываем логотип и мотивирующую цитату,
+# для вернувшихся - карточки с рекомендацией на сегодня, серией и
+# общим прогрессом. Это решает жалобу "главная страница выглядит пустой".
+# ============================================================
+
+progress_rows = db.get_progress_map(username)
+
+if not progress_rows:
+    col_a, col_b, col_c = st.columns([1, 2, 1])
+    with col_b:
+        st.image("assets/logo.png", width=140)
+        st.markdown(
+            f'<div class="bilimk-quote">{t("new_user_quote")}</div>',
+            unsafe_allow_html=True,
+        )
+    st.info(t("start_diagnostic_cta"))
+else:
+    dashboard_df = pd.DataFrame(progress_rows, columns=["subject", "topic", "correct", "total"])
+    dashboard_df["pct"] = dashboard_df["correct"] / dashboard_df["total"] * 100
+    overall_pct = round(dashboard_df["pct"].mean())
+    weakest = dashboard_df.sort_values("pct").iloc[0]
+    streak_days = db.get_streak(username)
+    today_answered = db.get_today_answers_count(username)
+    daily_goal = 10
+
+    st.write(t("dashboard_welcome", username=username))
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.markdown(
+            f'<div class="bilimk-card">'
+            f'<b>{t("dashboard_recommended")}</b><br>📚 {weakest["subject"]}'
+            f'{branding.render_mini_progress(round(weakest["pct"]))}'
+            f'<span style="font-size:0.82rem; color:{branding.NAVY};">{round(weakest["pct"])}%</span>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+    with col2:
+        st.markdown(
+            f'<div class="bilimk-card" style="text-align:center;">'
+            f'{t("dashboard_daily_goal")}<br>'
+            f'<span style="font-size:1.25rem; font-weight:700; color:{branding.NAVY};">'
+            f'{t("dashboard_daily_goal_progress", done=today_answered, goal=daily_goal)}</span><br><br>'
+            f'{branding.render_streak_badge(streak_days, t("dashboard_streak"))}'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+    with col3:
+        st.markdown(
+            f'<div class="bilimk-card" style="text-align:center;">'
+            f'{t("dashboard_overall_progress")}<br>'
+            f'<span style="font-size:1.9rem; font-weight:800; color:{branding.TEAL};">{overall_pct}%</span>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
 
 # Баннер-напоминание о диагностике: при первом входе или если прошло 7+ дней
 last_diag = db.get_last_diagnostic(username)
@@ -424,6 +502,21 @@ elif page == t("page_progress"):
         df = pd.DataFrame(progress_rows, columns=[col_subject, col_topic, col_correct, col_total])
         df[col_percent] = (df[col_correct] / df[col_total] * 100).round(0).astype(int)
 
+        # "Восхождение на гору" - буквальная визуализация общего прогресса,
+        # используя фирменный мотив BilimK (гора с флагом на вершине).
+        overall_pct = round(df[col_percent].mean())
+        col_climb, col_climb_label = st.columns([1, 1])
+        with col_climb:
+            st.markdown(branding.render_mountain_climb(overall_pct), unsafe_allow_html=True)
+        with col_climb_label:
+            st.markdown(
+                f'<div style="padding-top:40px;">'
+                f'<span style="font-size:2rem; font-weight:800; color:{branding.TEAL};">{overall_pct}%</span><br>'
+                f'<span style="color:{branding.NAVY};">{t("dashboard_overall_progress")}</span>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
         def status_label(pct):
             if pct >= 70:
                 return t("status_mastered")
@@ -488,6 +581,34 @@ elif page == t("page_mistakes"):
     if not mistakes:
         st.write(t("mistakes_empty"))
     else:
+        # Сводка тремя карточками: всего ошибок, слабых тем, исправлено.
+        # "Исправлено" - темы, где раньше были ошибки, а сейчас (по карте
+        # прогресса) освоенность уже >=70% - то есть ученик закрыл пробел.
+        progress_rows_for_stats = db.get_progress_map(username)
+        progress_by_topic = {(s, tp): (c / tt * 100 if tt else 0) for s, tp, c, tt in progress_rows_for_stats}
+
+        mistake_topics = {(row[0], row[2]) for row in mistakes}  # (subject, topic)
+        weak_topics_count = sum(1 for key, pct in progress_by_topic.items() if pct < 40)
+        fixed_count = sum(1 for key in mistake_topics if progress_by_topic.get(key, 0) >= 70)
+
+        stat_col1, stat_col2, stat_col3 = st.columns(3)
+        with stat_col1:
+            st.markdown(
+                branding.render_stat_card("⚠️", len(mistakes), t("stat_total_mistakes"), branding.NAVY),
+                unsafe_allow_html=True,
+            )
+        with stat_col2:
+            st.markdown(
+                branding.render_stat_card("📚", weak_topics_count, t("stat_weak_topics"), "#C0392B"),
+                unsafe_allow_html=True,
+            )
+        with stat_col3:
+            st.markdown(
+                branding.render_stat_card("✅", fixed_count, t("stat_fixed_topics"), branding.TEAL),
+                unsafe_allow_html=True,
+            )
+        st.write("")
+
         # Сводка: по каким темам ошибок больше всего
         topic_counts = {}
         for row in mistakes:
