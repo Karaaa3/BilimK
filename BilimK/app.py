@@ -158,7 +158,10 @@ if not st.session_state.username:
 
     col_logo, col_header = st.columns([1, 4])
     with col_logo:
-        st.image(LOGO_PATH, width=110) if os.path.exists(LOGO_PATH) else st.markdown("### 🏔")
+        if os.path.exists(LOGO_PATH):
+            st.image(LOGO_PATH, width=110)
+        else:
+            st.markdown("### 🏔")
     with col_header:
         st.markdown(
             branding.render_header(t("app_title"), t("app_tagline"), t("app_subtitle")),
@@ -249,7 +252,10 @@ progress_rows = db.get_progress_map(username)
 if not progress_rows:
     col_a, col_b, col_c = st.columns([1, 2, 1])
     with col_b:
-        st.image(LOGO_PATH, width=140) if os.path.exists(LOGO_PATH) else st.markdown("## 🏔")
+        if os.path.exists(LOGO_PATH):
+            st.image(LOGO_PATH, width=140)
+        else:
+            st.markdown("## 🏔")
         st.markdown(
             f'<div class="bilimk-quote">{t("new_user_quote")}</div>',
             unsafe_allow_html=True,
